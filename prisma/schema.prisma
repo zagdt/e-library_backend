@@ -1,0 +1,390 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  STAFF
+  ADMIN
+}
+
+enum ResourceCategory {
+  BOOK
+  JOURNAL
+  PAPER
+  MAGAZINE
+  THESIS
+  OTHER
+}
+
+enum AccessType {
+  VIEW_ONLY
+  DOWNLOADABLE
+  CAMPUS_ONLY
+}
+
+enum RequestStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  REJECTED
+}
+
+enum StorageType {
+  CLOUDINARY
+  S3
+}
+
+enum RequestPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum RequestCategory {
+  BOOK
+  JOURNAL
+  PAPER
+  THESIS
+  EQUIPMENT
+  OTHER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ResourceType distinguishes admin uploads (library resources) from staff uploads (academic materials)
+enum ResourceType {
+  BOOK // Admin: Library books
+  JOURNAL // Admin: Academic journals
+  THESIS // Admin: Theses/dissertations
+  MAGAZINE // Admin: Magazines/periodicals
+  MODULE_NOTES // Staff: Lecture notes for course units
+  PAST_PAPER // Staff: Past exam papers
+  LECTURE_SLIDE // Staff: Presentation slides
+  LAB_MANUAL // Staff: Lab/practical guides
+  ASSIGNMENT // Staff: Assignment materials
+  OTHER // Miscellaneous
+}
+
+// CampusLocation indicates where physical resources are available
+// ONLINE means the resource is digital (no physical location needed)
+enum CampusLocation {
+  MAIN_CAMPUS // Main campus library/location
+  MARKET_PLAZA // Market Plaza campus
+  ONLINE // Digital resource - no physical location
+}
+
+model User {
+  id                  String    @id @default(uuid())
+  email               String    @unique
+  name                String
+  hashedPassword      String
+  role                Role      @default(STUDENT)
+  emailVerified       Boolean   @default(false)
+  verificationToken   String?
+  resetToken          String?
+  resetTokenExpiry    DateTime?
+  refreshToken        String?
+  suspendedAt         DateTime?
+  suspendedReason     String?
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  uploadedResources Resource[]     @relation("UploadedBy")
+  approvedResources Resource[]     @relation("ApprovedBy")
+  downloadLogs      DownloadLog[]
+  searchLogs        SearchLog[]
+  requests          Request[]
+  auditLogs         AuditLog[]     @relation("PerformedBy")
+  notifications     Notification[]
+  favorites         Favorite[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model Resource {
+  id                String           @id @default(uuid())
+  title             String
+  authors           String[]
+  description       String?
+  category          ResourceCategory
+  resourceType      ResourceType     @default(OTHER)
+  department        String
+  publicationYear   Int?
+  cloudinaryId      String?
+  cloudinaryUrl     String?
+  s3Key             String?
+  s3Bucket          String?
+  storageType       StorageType      @default(CLOUDINARY)
+  coverImageId      String?
+  coverImageUrl     String?
+  fileType          String?
+  fileSize          Int?
+  accessType        AccessType       @default(DOWNLOADABLE)
+  tags              String[]
+  viewCount         Int              @default(0)
+  downloadCount     Int              @default(0)
+  isActive          Boolean          @default(true)
+  uploadedById      String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  // Physical location fields for CAMPUS_ONLY resources
+  physicalLocation  String? // Building/Room/Library section
+  shelfNumber       String? // Call number or shelf location
+  availabilityNotes String? // Availability hours or restrictions
+  copies            Int?             @default(1) // Number of physical copies
+  isbn              String? // ISBN for books
+  issn              String? // ISSN for journals
+  // Approval workflow fields (staff uploads require admin approval)
+  approvalStatus    ApprovalStatus   @default(PENDING)
+  approvalNote      String? // Admin note when approving/rejecting
+  approvedById      String? // Admin who approved
+  approvedAt        DateTime?
+  // Course unit linking (for staff academic materials)
+  courseUnitId      String?
+  // Campus location - where the physical resource is available
+  // Default ONLINE for digital resources (staff notes, etc.)
+  // Set to MAIN_CAMPUS or MARKET_PLAZA for physical library resources
+  campusLocation    CampusLocation   @default(ONLINE)
+
+  uploadedBy        User             @relation("UploadedBy", fields: [uploadedById], references: [id])
+  approvedBy        User?            @relation("ApprovedBy", fields: [approvedById], references: [id])
+  courseUnit        CourseUnit?      @relation(fields: [courseUnitId], references: [id])
+  courses           CourseResource[]
+  downloadLogs      DownloadLog[]
+  favorites         Favorite[]
+  fulfilledRequests Request[]        @relation("FulfilledResource")
+
+  @@index([title])
+  @@index([category])
+  @@index([resourceType])
+  @@index([department])
+  @@index([tags])
+  @@index([uploadedById])
+  @@index([approvalStatus])
+  @@index([courseUnitId])
+  @@index([createdAt])
+  @@index([storageType])
+  @@index([accessType])
+}
+
+model Course {
+  id         String   @id @default(uuid())
+  code       String   @unique
+  name       String
+  department String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  resources CourseResource[]
+  units     CourseUnit[]
+
+  @@index([department])
+}
+
+// Course units/modules for granular resource linking (e.g., CSC301.1 - Data Structures)
+model CourseUnit {
+  id          String   @id @default(uuid())
+  courseId    String
+  code        String // e.g., "CSC301.1" or "Unit 1"
+  name        String // e.g., "Introduction to Data Structures"
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course    Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  resources Resource[]
+
+  @@unique([courseId, code])
+  @@index([courseId])
+}
+
+model CourseResource {
+  id         String   @id @default(uuid())
+  courseId   String
+  resourceId String
+  createdAt  DateTime @default(now())
+
+  course   Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  resource Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, resourceId])
+}
+
+model DownloadLog {
+  id         String   @id @default(uuid())
+  userId     String
+  resourceId String
+  ipAddress  String?
+  userAgent  String?
+  timestamp  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resource Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resourceId])
+  @@index([timestamp])
+}
+
+model SearchLog {
+  id           String   @id @default(uuid())
+  userId       String?
+  query        String
+  filters      Json?
+  resultsCount Int      @default(0)
+  timestamp    DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([query])
+  @@index([timestamp])
+  @@index([userId])
+}
+
+model Request {
+  id                  String           @id @default(uuid())
+  userId              String
+  title               String
+  authors             String?
+  reason              String
+  status              RequestStatus    @default(OPEN)
+  priority            RequestPriority  @default(MEDIUM)
+  category            RequestCategory?
+  dueDate             DateTime?
+  adminReply          String?
+  resolvedAt          DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  // Enhanced response fields
+  accessInstructions  String? // How to access the resource
+  externalSourceUrl   String? // Link to external source if applicable
+  fulfilledResourceId String? // If admin uploaded/linked a resource
+
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fulfilledResource Resource? @relation("FulfilledResource", fields: [fulfilledResourceId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+  @@index([fulfilledResourceId])
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  entity        String
+  entityId      String?
+  action        String
+  performedById String
+  meta          Json?
+  ipAddress     String?
+  timestamp     DateTime @default(now())
+
+  performedBy User @relation("PerformedBy", fields: [performedById], references: [id])
+
+  @@index([entity])
+  @@index([action])
+  @@index([performedById])
+  @@index([timestamp])
+}
+
+model Analytics {
+  id             String   @id @default(uuid())
+  date           DateTime @db.Date
+  totalDownloads Int      @default(0)
+  totalSearches  Int      @default(0)
+  totalViews     Int      @default(0)
+  topSearchTerms Json?
+  topResources   Json?
+  usersByRole    Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([date])
+  @@index([date])
+}
+
+model BlacklistedToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([expiresAt])
+}
+
+// System settings for admin-configurable options
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  type        String // 'string' | 'boolean' | 'number' | 'json'
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+}
+
+// In-app notifications
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String // 'info' | 'success' | 'warning' | 'error' | 'request_update' | 'resource_added'
+  title     String
+  message   String
+  data      Json?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+}
+
+// User favorites/bookmarks
+model Favorite {
+  id         String   @id @default(uuid())
+  userId     String
+  resourceId String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resource Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, resourceId])
+  @@index([userId])
+  @@index([resourceId])
+}
+
+// Track login attempts for security
+model LoginAttempt {
+  id        String   @id @default(uuid())
+  email     String
+  success   Boolean
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([createdAt])
+  @@index([success])
+}
