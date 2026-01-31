@@ -387,7 +387,7 @@ export class ResourceService {
           entityId: id,
           action: 'UPDATE',
           performedById: userId,
-          meta: { changes: data },
+          meta: { changes: JSON.parse(JSON.stringify(data)) },
         },
       });
 

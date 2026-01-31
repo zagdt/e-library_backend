@@ -202,7 +202,7 @@ export class RequestService {
           entityId: id,
           action: 'UPDATE',
           performedById: adminId,
-          meta: { changes: data, previousStatus: request.status },
+          meta: { changes: JSON.parse(JSON.stringify(data)), previousStatus: request.status },
         },
       });
 
