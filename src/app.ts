@@ -68,7 +68,7 @@ app.use((req, _res, next) => {
   next();
 });
 
-// Health check endpoints (Kubernetes-style)
+// Health check endpoints (Kubernetes-style) 
 app.get('/health', async (_req, res) => {
   const status = await getHealthStatus();
   const httpStatus = status.status === 'healthy' ? 200 : status.status === 'degraded' ? 200 : 503;
